@@ -1,0 +1,11 @@
+{
+  "meta": { "partner": "GLOBEX", "sent_at": "2026-07-20T10:00:00Z" },
+  "order": {
+    "number": "PO-77821",
+    "date": "2026-07-19",
+    "positions": [
+      { "sku": "GX-100", "text": "Steel bracket", "quantity": 40, "price": 2.35 },
+      { "sku": "GX-205", "text": "Hex bolts M8 (100pk)", "quantity": 12, "price": 9.9 }
+    ]
+  }
+}

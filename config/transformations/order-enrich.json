@@ -1,0 +1,18 @@
+{
+  "id": "order-enrich",
+  "name": "Order enrichment (canonical → canonical)",
+  "kind": "transformation",
+  "description": "Drops cancelled lines, computes line and order totals, normalizes the partner code and enriches the partner name from a lookup table.",
+  "jsonata": "(\n  $active := [lines[status != \"cancelled\"]];\n  {\n    \"documentType\": documentType,\n    \"orderId\": orderId,\n    \"partner\": $uppercase(partner),\n    \"partnerName\": ($n := $lookup({\"ACME\": \"ACME Industrial Corp.\", \"GLOBEX\": \"Globex Corporation\"}, $uppercase(partner)); $exists($n) ? $n : partner),\n    \"orderDate\": orderDate,\n    \"lines\": [$active.{\n      \"sku\": sku,\n      \"description\": description,\n      \"quantity\": quantity,\n      \"unitPrice\": unitPrice,\n      \"lineTotal\": $round(quantity * unitPrice, 2)\n    }],\n    \"totals\": {\n      \"lineCount\": $count($active),\n      \"quantity\": $sum($active.quantity),\n      \"amount\": $round($sum($active.(quantity * unitPrice)), 2)\n    }\n  }\n)",
+  "graph": null,
+  "sampleInput": {
+    "documentType": "ORDER",
+    "orderId": "SO-1042",
+    "partner": "acme",
+    "orderDate": "2026-07-18",
+    "lines": [
+      { "sku": "AC-330", "description": "Anvil 30kg", "quantity": 2, "unitPrice": 149.0, "status": "open" },
+      { "sku": "AC-777", "description": "TNT crate", "quantity": 5, "unitPrice": 12.0, "status": "cancelled" }
+    ]
+  }
+}

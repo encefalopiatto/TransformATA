@@ -1,0 +1,10 @@
+{
+  "id": "inbound-acme-sftp",
+  "name": "ACME SFTP drop (embedded server)",
+  "description": "SFTP user for ACME on the embedded SFTP server. Only active when SFTP_SERVER_ENABLED=true (self-hosted deployments).",
+  "direction": "inbound",
+  "kind": "sftp",
+  "username": "acme",
+  "password": "acme-secret",
+  "enabled": true
+}

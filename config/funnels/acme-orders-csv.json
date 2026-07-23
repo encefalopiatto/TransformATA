@@ -1,0 +1,20 @@
+{
+  "id": "acme-orders-csv",
+  "name": "ACME orders (CSV → XML)",
+  "description": "Order files from ACME arrive as CSV; identified by the partner column of the first row. Delivered as XML to the ACME outbox.",
+  "enabled": true,
+  "priority": 10,
+  "match": {
+    "expression": "rows[0].partner",
+    "equals": "ACME"
+  },
+  "inputFormat": "csv",
+  "inputOptions": { "csv": { "delimiter": ",", "hasHeaders": true } },
+  "normalizationId": "acme-orders-normalize",
+  "transformationId": "order-enrich",
+  "denormalizationId": "order-to-xml",
+  "outputFormat": "xml",
+  "outputOptions": { "xml": { "attributePrefix": "@_" } },
+  "outputEndpointId": "outbox-acme",
+  "outputFileName": "acme-order-{jobId}.xml"
+}

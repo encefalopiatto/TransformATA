@@ -1,0 +1,8 @@
+{
+  "httpPort": 4100,
+  "sftpPort": 4122,
+  "sftpServerEnabled": false,
+  "snapshotLimitKb": 256,
+  "workerConcurrency": 2,
+  "evaluateTimeoutMs": 10000
+}

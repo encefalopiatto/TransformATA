@@ -1,0 +1,4 @@
+order_id,partner,order_date,sku,product_name,qty,unit_price,status
+SO-1042,ACME,2026-07-18,AC-330,Anvil 30kg,2,149.00,open
+SO-1042,ACME,2026-07-18,AC-101,Rocket skates,1,79.50,open
+SO-1042,ACME,2026-07-18,AC-777,TNT crate,5,12.00,cancelled

@@ -1,0 +1,9 @@
+{
+  "id": "outbox-globex",
+  "name": "GLOBEX outbox (directory)",
+  "description": "Local drop folder used to demo delivery.",
+  "direction": "outbound",
+  "kind": "directory",
+  "path": "data/outbox/globex",
+  "enabled": true
+}

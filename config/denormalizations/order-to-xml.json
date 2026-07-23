@@ -1,0 +1,19 @@
+{
+  "id": "order-to-xml",
+  "name": "Canonical order → ACME XML",
+  "kind": "denormalization",
+  "description": "Shapes the canonical order for XML serialization (attributes use the @_ prefix).",
+  "jsonata": "{\n  \"Order\": {\n    \"@_id\": orderId,\n    \"Partner\": { \"Code\": partner, \"Name\": partnerName },\n    \"Date\": orderDate,\n    \"Lines\": {\n      \"Line\": [lines.{\n        \"@_sku\": sku,\n        \"Description\": description,\n        \"Qty\": quantity,\n        \"UnitPrice\": unitPrice,\n        \"Total\": lineTotal\n      }]\n    },\n    \"Totals\": { \"Lines\": totals.lineCount, \"Quantity\": totals.quantity, \"Amount\": totals.amount }\n  }\n}",
+  "graph": null,
+  "sampleInput": {
+    "documentType": "ORDER",
+    "orderId": "SO-1042",
+    "partner": "ACME",
+    "partnerName": "ACME Industrial Corp.",
+    "orderDate": "2026-07-18",
+    "lines": [
+      { "sku": "AC-330", "description": "Anvil 30kg", "quantity": 2, "unitPrice": 149.0, "lineTotal": 298.0 }
+    ],
+    "totals": { "lineCount": 1, "quantity": 2, "amount": 298.0 }
+  }
+}

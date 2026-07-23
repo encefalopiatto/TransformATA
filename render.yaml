@@ -1,0 +1,24 @@
+# Render Blueprint — deploy TransformATA as a single free web service.
+# https://render.com/docs/blueprint-spec
+#
+# Free tier notes:
+# - The instance spins down after inactivity and has an EPHEMERAL filesystem:
+#   job history (SQLite) and admin-panel config edits reset on redeploy.
+#   Commit config/ files to the repo (they are loaded at boot) and use the
+#   admin panel's Export button to persist UI-made changes back into git.
+# - Only HTTP is exposed, so the embedded SFTP *server* stays disabled here.
+#   Use "sftp-poll" inbound endpoints (the app polls a remote SFTP server)
+#   and "sftp" outbound endpoints (the app uploads to a remote SFTP server).
+services:
+  - type: web
+    name: transformata
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SFTP_SERVER_ENABLED
+        value: "false"
