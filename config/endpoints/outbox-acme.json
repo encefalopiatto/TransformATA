@@ -1,0 +1,9 @@
+{
+  "id": "outbox-acme",
+  "name": "ACME outbox (directory)",
+  "description": "Local drop folder used to demo delivery. Swap for an api or sftp outbound endpoint in production.",
+  "direction": "outbound",
+  "kind": "directory",
+  "path": "data/outbox/acme",
+  "enabled": true
+}

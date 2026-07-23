@@ -1,0 +1,18 @@
+{
+  "id": "globex-orders-json",
+  "name": "GLOBEX orders (JSON → JSON)",
+  "description": "Purchase orders from GLOBEX arrive as JSON; identified by meta.partner. Delivered as JSON to the GLOBEX outbox.",
+  "enabled": true,
+  "priority": 20,
+  "match": {
+    "expression": "meta.partner",
+    "equals": "GLOBEX"
+  },
+  "inputFormat": "json",
+  "normalizationId": "globex-orders-normalize",
+  "transformationId": "order-enrich",
+  "denormalizationId": "order-to-globex-json",
+  "outputFormat": "json",
+  "outputEndpointId": "outbox-globex",
+  "outputFileName": "globex-order-{jobId}.json"
+}

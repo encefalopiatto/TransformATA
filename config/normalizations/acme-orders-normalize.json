@@ -1,0 +1,32 @@
+{
+  "id": "acme-orders-normalize",
+  "name": "ACME orders CSV → canonical",
+  "kind": "normalization",
+  "description": "Maps ACME's order CSV rows onto the canonical order document.",
+  "jsonata": "{\n  \"documentType\": \"ORDER\",\n  \"orderId\": rows[0].order_id,\n  \"partner\": rows[0].partner,\n  \"orderDate\": rows[0].order_date,\n  \"lines\": [rows.{\n    \"sku\": sku,\n    \"description\": product_name,\n    \"quantity\": $number(qty),\n    \"unitPrice\": $number(unit_price),\n    \"status\": status\n  }]\n}",
+  "graph": null,
+  "sampleInput": {
+    "rows": [
+      {
+        "order_id": "SO-1042",
+        "partner": "ACME",
+        "order_date": "2026-07-18",
+        "sku": "AC-330",
+        "product_name": "Anvil 30kg",
+        "qty": "2",
+        "unit_price": "149.00",
+        "status": "open"
+      },
+      {
+        "order_id": "SO-1042",
+        "partner": "ACME",
+        "order_date": "2026-07-18",
+        "sku": "AC-777",
+        "product_name": "TNT crate",
+        "qty": "5",
+        "unit_price": "12.00",
+        "status": "cancelled"
+      }
+    ]
+  }
+}

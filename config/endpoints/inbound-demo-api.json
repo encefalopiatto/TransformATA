@@ -1,0 +1,9 @@
+{
+  "id": "inbound-demo-api",
+  "name": "Demo inbound API",
+  "description": "HTTP push entry point for demo partners. POST raw file content to /api/inbound/inbound-demo-api with header X-Api-Key.",
+  "direction": "inbound",
+  "kind": "api",
+  "apiKey": "demo-key",
+  "enabled": true
+}

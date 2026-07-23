@@ -1,0 +1,19 @@
+{
+  "id": "order-to-globex-json",
+  "name": "Canonical order → GLOBEX JSON",
+  "kind": "denormalization",
+  "description": "Shapes the canonical order into GLOBEX's outbound purchase order JSON.",
+  "jsonata": "{\n  \"purchase_order\": {\n    \"id\": orderId,\n    \"supplier\": partnerName,\n    \"issued_on\": orderDate,\n    \"items\": [lines.{\n      \"article\": sku,\n      \"name\": description,\n      \"amount\": quantity,\n      \"price_per_unit\": unitPrice,\n      \"line_value\": lineTotal\n    }],\n    \"order_value\": totals.amount\n  }\n}",
+  "graph": null,
+  "sampleInput": {
+    "documentType": "ORDER",
+    "orderId": "PO-77821",
+    "partner": "GLOBEX",
+    "partnerName": "Globex Corporation",
+    "orderDate": "2026-07-19",
+    "lines": [
+      { "sku": "GX-100", "description": "Steel bracket", "quantity": 40, "unitPrice": 2.35, "lineTotal": 94.0 }
+    ],
+    "totals": { "lineCount": 1, "quantity": 40, "amount": 94.0 }
+  }
+}
