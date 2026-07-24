@@ -9,7 +9,7 @@ import type {
 } from '@transformata/shared';
 import { getEndpoint } from '../config-store.js';
 import { errorMessage } from '../errors.js';
-import { fromRoot } from '../root.js';
+import { resolveContainedDir } from '../root.js';
 
 const CONTENT_TYPES: Record<DataFormat, string> = {
   json: 'application/json',
@@ -85,7 +85,7 @@ export async function deliverToEndpoint(
 ): Promise<string> {
   switch (endpoint.kind) {
     case 'directory': {
-      const dir = fromRoot(endpoint.path);
+      const dir = resolveContainedDir(endpoint.path);
       fs.mkdirSync(dir, { recursive: true });
       const target = path.join(dir, fileName);
       fs.writeFileSync(target, text, 'utf8');

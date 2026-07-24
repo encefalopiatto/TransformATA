@@ -21,6 +21,46 @@ interface PollerEntry {
   running: boolean;
 }
 
+/** Minimal remote-file interface used by the after-fetch logic (SftpClient satisfies it). */
+export interface RemoteFileOps {
+  delete(remotePath: string): Promise<unknown>;
+  rename(fromPath: string, toPath: string): Promise<unknown>;
+}
+
+/**
+ * Move a remote file, tolerating a pre-existing destination. Plain `rename`
+ * fails on many SFTP servers when the target already exists, which would leave
+ * the source file in place to be re-ingested forever. Delete-then-rename makes
+ * the move idempotent.
+ */
+export async function moveRemoteFileSafely(
+  ops: RemoteFileOps,
+  fromPath: string,
+  toPath: string,
+): Promise<void> {
+  await ops.delete(toPath).catch(() => undefined); // ignore "does not exist"
+  await ops.rename(fromPath, toPath);
+}
+
+/**
+ * Perform the configured after-fetch action on a successfully fetched file.
+ * MUST run BEFORE the job is created: if it fails, we leave the file in place
+ * and do NOT create a job, so the file is retried next tick rather than being
+ * ingested twice.
+ */
+export async function performAfterFetch(
+  ops: RemoteFileOps,
+  afterFetch: 'delete' | 'move',
+  remotePath: string,
+  moveDest: string,
+): Promise<void> {
+  if (afterFetch === 'delete') {
+    await ops.delete(remotePath);
+  } else {
+    await moveRemoteFileSafely(ops, remotePath, moveDest);
+  }
+}
+
 /** Convert a simple glob (`*` and `?` only) to a RegExp. */
 export function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
@@ -132,13 +172,23 @@ async function pollOnce(endpoint: InboundSftpPollEndpoint): Promise<void> {
       await client.mkdir(moveToDir, true).catch(() => undefined); // may already exist
     }
 
+    const processedNames = new Set<string>();
     for (const file of files) {
+      // Guard against a listing that surfaces the same name twice in one poll.
+      if (processedNames.has(file.name)) continue;
+      processedNames.add(file.name);
+
       const remotePath = path.posix.join(endpoint.remoteDir, file.name);
+      const moveDest = path.posix.join(moveToDir, file.name);
       try {
         const content = await client.get(remotePath);
         const text = Buffer.isBuffer(content)
           ? content.toString('utf8')
           : String(content);
+        // Delete/move FIRST. If this fails the file is untouched and retried
+        // next tick; we never create a job for a file we couldn't dispose of,
+        // which is what previously caused an infinite re-ingestion loop.
+        await performAfterFetch(client, afterFetch, remotePath, moveDest);
         const job = createJob(
           {
             endpointId: endpoint.id,
@@ -151,11 +201,6 @@ async function pollOnce(endpoint: InboundSftpPollEndpoint): Promise<void> {
         console.log(
           `[sftp-poll] ingested "${file.name}" from ${endpoint.host}:${endpoint.remoteDir} → job ${job.id}`,
         );
-        if (afterFetch === 'delete') {
-          await client.delete(remotePath);
-        } else {
-          await client.rename(remotePath, path.posix.join(moveToDir, file.name));
-        }
       } catch (err) {
         // Leave the file in place; it will be retried on the next tick.
         console.error(

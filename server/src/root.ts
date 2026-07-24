@@ -30,11 +30,45 @@ export function repoRoot(): string {
     if (parent === dir) break;
     dir = parent;
   }
+  // Fallback: nothing containing config/ was found walking up. Boot from the
+  // current working directory, but warn loudly — a healthy-but-empty server
+  // booted from the wrong cwd is a confusing failure mode.
   cachedRoot = process.cwd();
+  if (!fs.existsSync(path.join(cachedRoot, 'config'))) {
+    console.warn(
+      `[root] WARNING: no "config/" directory found walking up from ${process.cwd()}. ` +
+        `Falling back to ${cachedRoot}; the server will start with NO endpoints, funnels, ` +
+        `or mappings. Set TRANSFORMATA_ROOT to your project root to fix this.`,
+    );
+  }
   return cachedRoot;
 }
 
 /** Resolve a path relative to the repo root (absolute paths pass through). */
 export function fromRoot(...segments: string[]): string {
   return path.resolve(repoRoot(), ...segments);
+}
+
+/**
+ * Resolve a directory path relative to the repo root, ensuring the result
+ * stays within that root (defence against path traversal / absolute-path
+ * escapes on the unauthenticated admin API). Throws a plain Error when the
+ * path escapes the root, UNLESS `TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX === 'true'`
+ * (opt-in for self-hosted deployments that intentionally write outside the
+ * project). Uses `path.relative` so sibling-prefix paths (e.g. `/root` vs
+ * `/root-evil`) are not mistaken for containment.
+ */
+export function resolveContainedDir(dirPath: string): string {
+  const resolved = fromRoot(dirPath);
+  if (process.env.TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX === 'true') return resolved;
+  const root = repoRoot();
+  const rel = path.relative(root, resolved);
+  const escapes = rel !== '' && (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel));
+  if (escapes) {
+    throw new Error(
+      `directory path "${dirPath}" resolves outside the project root (${root}); ` +
+        `set TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX=true to allow paths outside the project`,
+    );
+  }
+  return resolved;
 }

@@ -409,7 +409,7 @@ export const NODE_CATALOG: NodeSpec[] = [
     type: 'raw',
     label: 'JSONata expression',
     category: 'Advanced',
-    help: 'Hand-written JSONata for anything the other blocks cannot do. Optionally wire a context in — the expression then runs against it.',
+    help: 'Hand-written JSONata for anything the other blocks cannot do. Optionally wire a context in — the expression then runs against the wired context; if the context is a list it runs once per item (JSONata "." semantics).',
     inputs: [{ name: 'context', label: 'context', required: false }],
     hasOutput: true,
     defaultData: { expression: '$' },

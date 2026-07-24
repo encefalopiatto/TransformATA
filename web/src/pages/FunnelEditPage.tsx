@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type {
+  CsvOptions,
   DataFormat,
   Endpoint,
   FormatOptions,
@@ -8,6 +9,7 @@ import type {
   TestFunnelResponse,
   TransformConfig,
   TransformKind,
+  XmlOptions,
 } from '@transformata/shared';
 import { api } from '../api';
 import StageTimeline from '../components/StageTimeline';
@@ -15,6 +17,31 @@ import { ErrorBanner, Loading } from '../components/ui';
 import { useToast } from '../components/Toasts';
 
 type Draft = Omit<FunnelConfig, 'id'>;
+
+/**
+ * Sanitize format options for a given format before sending. The server now
+ * REPLACES the funnel on PUT, so we must send exactly the intended fields:
+ * options that don't belong to `format` are dropped, and an empty CSV
+ * delimiter is omitted (never sent as "") so the server falls back to its
+ * default instead of failing every job with an empty separator.
+ */
+function cleanOptions(format: DataFormat, opts: FormatOptions | undefined): FormatOptions | undefined {
+  if (format === 'csv') {
+    const csv: CsvOptions = {};
+    const delimiter = opts?.csv?.delimiter;
+    if (delimiter !== undefined && delimiter !== '') csv.delimiter = delimiter;
+    if (opts?.csv?.hasHeaders !== undefined) csv.hasHeaders = opts.csv.hasHeaders;
+    return Object.keys(csv).length ? { csv } : undefined;
+  }
+  if (format === 'xml') {
+    const xml: XmlOptions = {};
+    if (opts?.xml?.rootName) xml.rootName = opts.xml.rootName;
+    if (opts?.xml?.attributePrefix) xml.attributePrefix = opts.xml.attributePrefix;
+    return Object.keys(xml).length ? { xml } : undefined;
+  }
+  // JSON takes no options.
+  return undefined;
+}
 
 const EMPTY_DRAFT: Draft = {
   name: '',
@@ -134,6 +161,7 @@ export default function FunnelEditPage() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   const [testContent, setTestContent] = useState('');
   const [testFileName, setTestFileName] = useState('');
@@ -154,27 +182,33 @@ export default function FunnelEditPage() {
     })();
   }, [id]);
 
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
+    setDirty(true);
     setDraft((d) => (d ? { ...d, [key]: value } : d));
+  };
 
   const transformsOf = (kind: TransformKind) => transforms.filter((t) => t.kind === kind);
   const outbound = endpoints.filter((e) => e.direction === 'outbound');
   const inbound = endpoints.filter((e) => e.direction === 'inbound');
 
-  const save = async () => {
-    if (!draft) return;
+  /** Returns true when the funnel was saved successfully. */
+  const save = async (): Promise<boolean> => {
+    if (!draft) return false;
     if (!draft.name.trim()) {
       toast('Please give the funnel a name.', 'error');
-      return;
+      return false;
     }
     if (!draft.match.expression.trim()) {
       toast('Please fill in the match expression — it tells the funnel which files are for it.', 'error');
-      return;
+      return false;
     }
     if (!draft.outputEndpointId) {
       toast('Please choose where the result should be delivered.', 'error');
-      return;
+      return false;
     }
+    // The server REPLACES the funnel on PUT, so build a COMPLETE object with
+    // exactly the intended fields: cleared optionals are omitted (never sent
+    // empty) so the replace drops them.
     const body: Draft = {
       ...draft,
       description: draft.description?.trim() || undefined,
@@ -182,6 +216,8 @@ export default function FunnelEditPage() {
         expression: draft.match.expression.trim(),
         equals: draft.match.equals?.trim() ? draft.match.equals.trim() : undefined,
       },
+      inputOptions: cleanOptions(draft.inputFormat, draft.inputOptions),
+      outputOptions: cleanOptions(draft.outputFormat, draft.outputOptions),
       inboundEndpointIds: draft.inboundEndpointIds?.length ? draft.inboundEndpointIds : undefined,
       outputFileName: draft.outputFileName?.trim() || undefined,
       normalizationId: draft.normalizationId || null,
@@ -192,15 +228,19 @@ export default function FunnelEditPage() {
     try {
       if (isNew) {
         const created = await api.createFunnel(body);
+        setDirty(false);
         toast('Funnel created.', 'success');
         navigate(`/admin/funnels/${created.id}`, { replace: true });
       } else {
         const updated = await api.updateFunnel(id, { ...body, id });
         setDraft(updated);
+        setDirty(false);
         toast('Funnel saved.', 'success');
       }
+      return true;
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save the funnel', 'error');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -225,6 +265,13 @@ export default function FunnelEditPage() {
     if (!testContent.trim()) {
       setTestError('Paste some file content first.');
       return;
+    }
+    // The test endpoint loads the STORED funnel by id, so on-screen edits are
+    // ignored unless we persist them first. Save the pending changes so the
+    // test actually reflects what's on screen; abort if the save fails.
+    if (dirty) {
+      const ok = await save();
+      if (!ok) return;
     }
     setTesting(true);
     setTestError(null);
@@ -537,10 +584,15 @@ export default function FunnelEditPage() {
                 />
               </div>
             </div>
-            <div className="btn-row" style={{ marginTop: 14 }}>
-              <button type="button" className="btn primary" onClick={runTest} disabled={testing}>
+            <div className="btn-row" style={{ marginTop: 14, alignItems: 'center', gap: 10 }}>
+              <button type="button" className="btn primary" onClick={runTest} disabled={testing || saving}>
                 {testing ? 'Running…' : 'Run test'}
               </button>
+              {dirty && (
+                <span className="help" style={{ color: 'var(--text-muted)' }}>
+                  Your unsaved changes will be saved before the test runs.
+                </span>
+              )}
             </div>
             {testError && (
               <div className="test-result">

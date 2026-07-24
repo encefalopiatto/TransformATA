@@ -9,7 +9,7 @@ import type {
 } from '@transformata/shared';
 import { badRequest, conflict, notFound } from './errors.js';
 import { generateConfigId } from './ids.js';
-import { fromRoot } from './root.js';
+import { fromRoot, resolveContainedDir } from './root.js';
 
 /**
  * File-backed config store. One JSON file per object, filename `<id>.json`.
@@ -134,6 +134,18 @@ function validateEndpointShape(body: Record<string, unknown>): void {
       `"kind" must be one of ${ENDPOINT_KINDS[direction].join(', ')} for ${direction} endpoints`,
     );
   }
+  // Outbound `directory` endpoints must not escape the project root (the admin
+  // API is unauthenticated; an absolute or "../.." path would write anywhere).
+  if (direction === 'outbound' && kind === 'directory') {
+    if (typeof body.path !== 'string' || body.path.trim() === '') {
+      throw badRequest('"path" (non-empty string) is required for directory endpoints');
+    }
+    try {
+      resolveContainedDir(body.path);
+    } catch (err) {
+      throw badRequest(err instanceof Error ? err.message : String(err));
+    }
+  }
 }
 
 export function createEndpoint(body: unknown): Endpoint {
@@ -145,13 +157,24 @@ export function createEndpoint(body: unknown): Endpoint {
   return endpoint;
 }
 
-export function updateEndpoint(id: string, patch: unknown): Endpoint {
+/**
+ * PUT semantics: REPLACE the stored endpoint with the incoming body. Only `id`
+ * is preserved and `kind` is immutable (a changed kind is rejected). This is
+ * what lets clients clear now-optional fields (stale headers, credentials,
+ * inbound restrictions) — a merge would leave them behind. Unknown/extra keys
+ * are tolerated (stored as-is).
+ */
+export function updateEndpoint(id: string, body: unknown): Endpoint {
   const existing = getEndpoint(id);
   if (!existing) throw notFound(`endpoint "${id}" not found`);
-  if (!isRecord(patch)) throw badRequest('request body must be a JSON object');
-  const merged = { ...existing, ...patch, id } as unknown as Record<string, unknown>;
-  validateEndpointShape(merged);
-  const endpoint = merged as unknown as Endpoint;
+  if (!isRecord(body)) throw badRequest('request body must be a JSON object');
+  const name = requireName(body);
+  if (typeof body.kind === 'string' && body.kind !== existing.kind) {
+    throw badRequest(`endpoint "kind" is immutable (existing "${existing.kind}")`);
+  }
+  const replaced = { ...body, name, id, kind: existing.kind } as unknown as Record<string, unknown>;
+  validateEndpointShape(replaced);
+  const endpoint = replaced as unknown as Endpoint;
   writeOne(ENDPOINTS_DIR, id, endpoint);
   return endpoint;
 }
@@ -213,20 +236,42 @@ export function createFunnel(body: unknown): FunnelConfig {
     name,
   };
   validateFunnelShape(withDefaults);
+  normalizeFunnelCsvDelimiters(withDefaults);
   const funnel = { ...withDefaults, id: generateConfigId(name) } as unknown as FunnelConfig;
   writeOne(FUNNELS_DIR, funnel.id, funnel);
   return funnel;
 }
 
-export function updateFunnel(id: string, patch: unknown): FunnelConfig {
+/**
+ * PUT semantics: REPLACE the stored funnel with the incoming body, preserving
+ * only the immutable `id`. A merge would strand cleared optional fields
+ * (e.g. inbound endpoint restrictions). Clients must send the complete object.
+ * Unknown/extra keys are tolerated (stored as-is).
+ */
+export function updateFunnel(id: string, body: unknown): FunnelConfig {
   const existing = getFunnel(id);
   if (!existing) throw notFound(`funnel "${id}" not found`);
-  if (!isRecord(patch)) throw badRequest('request body must be a JSON object');
-  const merged = { ...existing, ...patch, id } as unknown as Record<string, unknown>;
-  validateFunnelShape(merged);
-  const funnel = merged as unknown as FunnelConfig;
+  if (!isRecord(body)) throw badRequest('request body must be a JSON object');
+  const name = requireName(body);
+  const replaced = { ...body, name, id } as unknown as Record<string, unknown>;
+  validateFunnelShape(replaced);
+  normalizeFunnelCsvDelimiters(replaced);
+  const funnel = replaced as unknown as FunnelConfig;
   writeOne(FUNNELS_DIR, id, funnel);
   return funnel;
+}
+
+/** Default an empty/whitespace csv delimiter to "," on inputOptions/outputOptions. */
+function normalizeFunnelCsvDelimiters(body: Record<string, unknown>): void {
+  for (const key of ['inputOptions', 'outputOptions']) {
+    const opts = body[key];
+    if (isRecord(opts) && isRecord(opts.csv)) {
+      const delimiter = opts.csv.delimiter;
+      if (typeof delimiter === 'string' && delimiter.trim() === '') {
+        opts.csv.delimiter = ',';
+      }
+    }
+  }
 }
 
 export function deleteFunnel(id: string): void {

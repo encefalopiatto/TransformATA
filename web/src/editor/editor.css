@@ -100,6 +100,12 @@
   font-weight: 600;
   white-space: nowrap;
 }
+.tfa-ed-block-msg {
+  color: var(--red, #e5484d);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .tfa-ed-banner {
   margin: 8px 16px 0;
   flex: none;

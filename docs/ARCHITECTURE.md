@@ -135,8 +135,19 @@ change.
 - Inbound API endpoints authenticate with per-endpoint API keys.
 - Admin + monitor APIs are unauthenticated in this MVP — front the service
   with access restrictions if exposed publicly, or add auth before real use.
-- JSONata evaluation is time-boxed (`evaluateTimeoutMs`) to contain runaway
-  expressions.
+- JSONata evaluation runs in an **isolated worker thread** (`server/src/
+  jsonata-worker.ts`) that is hard-terminated after `evaluateTimeoutMs`. A
+  cooperative in-process timeout cannot interrupt a synchronous/CPU-bound
+  expression — the single event loop would stay blocked until it returned,
+  a denial-of-service vector on the unauthenticated admin + pipeline surfaces.
+  The worker isolates the evaluation so `worker.terminate()` reclaims a runaway
+  while the main event loop stays responsive. All server-side evaluation
+  (routing match, normalize/transform/denormalize, `POST /api/admin/evaluate`,
+  funnel test) is funneled through `jsonata-runner.ts` → the worker. The cost
+  is ~tens of ms per evaluation, which is acceptable for this workload.
+- Outbound `directory` endpoints are constrained to the project root: an
+  absolute or `../..` path is rejected on save and at delivery time, unless
+  `TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX=true` (opt-in for self-hosted use).
 
 ## Deploy (Render)
 

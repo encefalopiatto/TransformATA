@@ -27,8 +27,22 @@ export function jsonataSyntaxError(expression: string): string | null {
     jsonata(expression);
     return null;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessage(err);
   }
+}
+
+/**
+ * Extract a human-readable message from a thrown value. jsonata throws plain
+ * objects (not Error instances) that carry a string `message` (and `code`),
+ * so `String(err)` would yield "[object Object]".
+ */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const m = (err as { message: unknown }).message;
+    if (typeof m === 'string') return m;
+  }
+  return String(err);
 }
 
 function readString(data: Record<string, unknown>, key: string): string | undefined {
@@ -75,7 +89,10 @@ function compilePath(
     const base = m ? m[1] : segment;
     const indexes = m ? m[2] : '';
     if (base === '') return fail(`${what} "${path}" has a segment with only an index`);
-    if (IDENT_RE.test(base)) {
+    // `true`/`false`/`null` match IDENT_RE but are JSONata keyword literals, so
+    // a bare segment would read as the boolean/null value, not the field.
+    const reserved = base === 'true' || base === 'false' || base === 'null';
+    if (IDENT_RE.test(base) && !reserved) {
       parts.push(base + indexes);
     } else if (base.includes('`')) {
       return fail(`${what} "${path}" contains a backtick, which is not allowed`);
@@ -90,8 +107,12 @@ function compilePath(
 function literalExpr(value: unknown): string {
   const json = JSON.stringify(value === undefined ? null : value);
   const text = json === undefined ? 'null' : json;
-  // A leading minus would bind wrongly in e.g. `E(in).path` chains.
-  return text.startsWith('-') ? `(${text})` : text;
+  // Number/boolean/null literals must be parenthesized so they can be wired
+  // into a path chain (e.g. `5.foo` is a JSONata parse error but `(5).foo`
+  // parses). String/object/array literals (`"..."`, `{...}`, `[...]`) are safe.
+  const first = text[0];
+  const needsParens = first !== '"' && first !== '{' && first !== '[';
+  return needsParens ? `(${text})` : text;
 }
 
 /* ------------------------------ compile ------------------------------ */
@@ -371,13 +392,18 @@ function emitInner(node: TGraphNode, ctx: Ctx): string {
     case 'map': {
       const array = required(node, 'array', 'array', ctx);
       const each = required(node, 'each', 'each', ctx);
-      return `[(${array}).(${each})]`;
+      // $map (not `.`) so that a per-item array result is not flattened across
+      // items; `$i.(each)` keeps `$` = the current item for the each subtree.
+      // The outer [...] forces an array and prevents single-element collapse.
+      return `[$map(${array}, function($i){ $i.(${each}) })]`;
     }
 
     case 'filter': {
       const array = required(node, 'array', 'array', ctx);
       const predicate = required(node, 'predicate', 'condition', ctx);
-      return `[(${array})[${predicate}]]`;
+      // $boolean() so a non-boolean predicate (e.g. a numeric field) is a truth
+      // test, not JSONata positional index selection.
+      return `[(${array})[$boolean(${predicate})]]`;
     }
 
     case 'sort': {

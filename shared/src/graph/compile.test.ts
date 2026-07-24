@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphNodeType, TGraph, TGraphEdge, TGraphNode } from '../types.js';
 import { evaluateExpression } from '../evaluate.js';
-import { compileGraph } from './compile.js';
+import { compileGraph, jsonataSyntaxError } from './compile.js';
 
 /* ------------------------------ helpers ------------------------------ */
 
@@ -96,7 +96,7 @@ describe('compileGraph — full example from docs/GRAPH_NODES.md', () => {
   it('compiles to the specced expression', () => {
     const { expression, warnings } = compileOk(g);
     expect(expression).toBe(
-      '[([($$.rows)[(status != "cancelled")]]).({ "sku": sku, "total": ($number(qty) * $number(unit_price)) })]',
+      '[$map([($$.rows)[$boolean((status != "cancelled"))]], function($i){ $i.({ "sku": sku, "total": ($number(qty) * $number(unit_price)) }) })]',
     );
     expect(warnings).toEqual([]);
   });
@@ -142,7 +142,7 @@ describe('object / array building', () => {
       [e('a -> arr.item:0'), e('b -> arr.item:2'), e('arr -> out.in')],
     );
     const { expression, warnings } = compileOk(g);
-    expect(expression).toBe('[1, "two"]');
+    expect(expression).toBe('[(1), "two"]');
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ nodeId: 'arr' });
     await expect(evalOk(expression, {})).resolves.toEqual([1, 'two']);
@@ -335,7 +335,7 @@ describe('string ops', () => {
 
 describe('number aggregation', () => {
   it('rounds the sum of a mapped amount', async () => {
-    // $round($sum([($$.lines).((qty * price))]), 2)
+    // $round($sum([$map($$.lines, function($i){ $i.((qty * price)) })]), 2)
     const g = graph(
       [
         n('in', 'input'),
@@ -360,7 +360,9 @@ describe('number aggregation', () => {
       ],
     );
     const { expression } = compileOk(g);
-    expect(expression).toBe('$round($sum([($$.lines).((qty * price))]), 2)');
+    expect(expression).toBe(
+      '$round($sum([$map($$.lines, function($i){ $i.((qty * price)) })]), 2)',
+    );
     await expect(
       evalOk(expression, { lines: [{ qty: 3, price: 0.5 }, { qty: 2, price: 0.407 }] }),
     ).resolves.toBe(2.31);
@@ -393,6 +395,124 @@ describe('raw node', () => {
     const { expression } = compileOk(g);
     expect(expression).toBe('(($$.order).($uppercase(number)))');
     await expect(evalOk(expression, { order: { number: 'po-1' } })).resolves.toBe('PO-1');
+  });
+});
+
+/* ---------------- regression: compiler/eval defect fixes -------------- */
+
+describe('map does not flatten per-item array results', () => {
+  it('nested map preserves nesting', async () => {
+    // groups -> map(each = items -> map(each = name))  ==>  [["a","b"],["c"]]
+    const g = graph(
+      [
+        n('in', 'input'),
+        n('groups', 'path', { path: 'groups' }),
+        n('outer', 'map'),
+        n('items', 'path', { path: 'items' }),
+        n('inner', 'map'),
+        n('name', 'path', { path: 'name' }),
+        n('out', 'output'),
+      ],
+      [
+        e('in -> groups.in'),
+        e('groups -> outer.array'),
+        e('items -> inner.array'),
+        e('name -> inner.each'),
+        e('inner -> outer.each'),
+        e('outer -> out.in'),
+      ],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe(
+      '[$map($$.groups, function($i){ $i.([$map(items, function($i){ $i.(name) })]) })]',
+    );
+    await expect(
+      evalOk(expression, {
+        groups: [{ items: [{ name: 'a' }, { name: 'b' }] }, { items: [{ name: 'c' }] }],
+      }),
+    ).resolves.toEqual([['a', 'b'], ['c']]);
+  });
+
+  it('map -> object yields one object per element', async () => {
+    const g = graph(
+      [
+        n('in', 'input'),
+        n('rows', 'path', { path: 'rows' }),
+        n('mp', 'map'),
+        n('obj', 'object', { keys: ['sku'] }),
+        n('sku', 'path', { path: 'sku' }),
+        n('out', 'output'),
+      ],
+      [
+        e('in -> rows.in'),
+        e('rows -> mp.array'),
+        e('sku -> obj.key:sku'),
+        e('obj -> mp.each'),
+        e('mp -> out.in'),
+      ],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe(
+      '[$map($$.rows, function($i){ $i.({ "sku": sku }) })]',
+    );
+    await expect(
+      evalOk(expression, { rows: [{ sku: 'A' }, { sku: 'B' }] }),
+    ).resolves.toEqual([{ sku: 'A' }, { sku: 'B' }]);
+  });
+});
+
+describe('filter uses $boolean, not positional indexing', () => {
+  it('keeps rows whose numeric field is truthy', async () => {
+    const g = graph(
+      [
+        n('in', 'input'),
+        n('rows', 'path', { path: 'rows' }),
+        n('flt', 'filter'),
+        n('qty', 'path', { path: 'qty' }),
+        n('out', 'output'),
+      ],
+      [
+        e('in -> rows.in'),
+        e('rows -> flt.array'),
+        e('qty -> flt.predicate'),
+        e('flt -> out.in'),
+      ],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe('[($$.rows)[$boolean(qty)]]');
+    await expect(
+      evalOk(expression, {
+        rows: [{ qty: 0, n: 'a' }, { qty: 5, n: 'b' }, { qty: 2, n: 'c' }],
+      }),
+    ).resolves.toEqual([{ qty: 5, n: 'b' }, { qty: 2, n: 'c' }]);
+  });
+});
+
+describe('reserved-word path segment', () => {
+  it('reads a field literally named "true"', async () => {
+    const g = graph(
+      [n('in', 'input'), n('p', 'path', { path: 'true' }), n('out', 'output')],
+      [e('in -> p.in'), e('p -> out.in')],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe('$$.`true`');
+    await expect(evalOk(expression, { true: 42 })).resolves.toBe(42);
+  });
+});
+
+describe('number-literal wired into a path', () => {
+  it('parenthesizes so the path chain parses', async () => {
+    const g = graph(
+      [n('five', 'literal', { value: 5 }), n('p', 'path', { path: 'foo' }), n('out', 'output')],
+      [e('five -> p.in'), e('p -> out.in')],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe('(5).foo');
+    // A number has no field "foo"; the point is it PARSES and evaluates (to
+    // null) rather than being the `5.foo` parse error the old emit produced.
+    expect(jsonataSyntaxError('5.foo')).not.toBeNull();
+    expect(jsonataSyntaxError('(5).foo')).toBeNull();
+    await expect(evalOk(expression, {})).resolves.toBe(null);
   });
 });
 
@@ -454,6 +574,22 @@ describe('error cases', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].nodeId).toBe('r');
     expect(errors[0].message).toMatch(/syntax error/i);
+  });
+
+  it('raw syntax error reports a real message, not [object Object]', () => {
+    // jsonata throws a plain object (not an Error) carrying a string message.
+    const errors = errorsOf(
+      graph(
+        [n('r', 'raw', { expression: '$x := ' }), n('out', 'output')],
+        [e('r -> out.in')],
+      ),
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0].nodeId).toBe('r');
+    expect(errors[0].message).not.toContain('[object Object]');
+    expect(errors[0].message).toContain('Unexpected end of expression');
+    // The exported syntax-check helper must extract the message too.
+    expect(jsonataSyntaxError('$x := ')).toBe('Unexpected end of expression');
   });
 
   it('output with nothing wired in', () => {

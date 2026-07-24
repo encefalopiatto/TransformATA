@@ -22,7 +22,7 @@ export function parseDocument(text: string, format: DataFormat, options?: Format
     }
     case 'csv': {
       const csv = options?.csv ?? {};
-      const delimiter = csv.delimiter ?? ',';
+      const delimiter = normalizeDelimiter(csv.delimiter);
       try {
         if (csv.hasHeaders === false) {
           const raw = csvParse(text, {
@@ -56,7 +56,16 @@ export function parseDocument(text: string, format: DataFormat, options?: Format
         throw new Error(`invalid XML: ${validation.err.msg} (line ${validation.err.line})`);
       }
       try {
-        const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix });
+        // parseTagValue/parseAttributeValue false: keep ALL leaf values as
+        // strings. Otherwise "<id>00123</id>" becomes the number 123 (leading
+        // zeros dropped) — mangling identifiers/refs and breaking string-match
+        // expressions. Mappings cast explicitly with $number() when needed.
+        const parser = new XMLParser({
+          ignoreAttributes: false,
+          attributeNamePrefix,
+          parseTagValue: false,
+          parseAttributeValue: false,
+        });
         return parser.parse(text) as unknown;
       } catch (err) {
         throw new Error(`invalid XML: ${errorMessage(err)}`);
@@ -88,10 +97,15 @@ export function serializeDocument(
           'CSV serialization expects an array of flat objects or an object with a "rows" array',
         );
       }
+      // Infer columns from the UNION of keys across ALL rows (first-seen
+      // order), not just the first row — otherwise columns that are absent
+      // from the first row are silently dropped from every row.
+      const columns = unionColumns(rows);
       try {
         return csvStringify(rows as Parameters<typeof csvStringify>[0], {
           header: true,
-          delimiter: options?.csv?.delimiter ?? ',',
+          delimiter: normalizeDelimiter(options?.csv?.delimiter),
+          ...(columns.length > 0 ? { columns } : {}),
         });
       } catch (err) {
         throw new Error(`CSV serialization failed: ${errorMessage(err)}`);
@@ -114,6 +128,32 @@ export function serializeDocument(
       }
     }
   }
+}
+
+/**
+ * An empty or whitespace-only delimiter reaches csv-parse/csv-stringify and
+ * throws ("Invalid delimiter"), failing every job for that funnel. Treat it as
+ * the default ",".
+ */
+function normalizeDelimiter(delimiter: string | undefined): string {
+  return typeof delimiter === 'string' && delimiter.trim() !== '' ? delimiter : ',';
+}
+
+/** Union of object keys across all rows, preserving first-seen order. */
+function unionColumns(rows: unknown[]): string[] {
+  const seen = new Set<string>();
+  const columns: string[] = [];
+  for (const row of rows) {
+    if (isPlainObject(row)) {
+      for (const key of Object.keys(row)) {
+        if (!seen.has(key)) {
+          seen.add(key);
+          columns.push(key);
+        }
+      }
+    }
+  }
+  return columns;
 }
 
 function csvRows(doc: unknown): unknown[] | null {

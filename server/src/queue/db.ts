@@ -49,7 +49,30 @@ export function getDb(): DatabaseSync {
   db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  reclaimOrphanedJobs(db);
   return db;
+}
+
+/**
+ * Re-queue jobs left in 'processing' by a previous run. Nothing else resets
+ * in-flight jobs, so without this a redeploy / OOM / crash strands them in
+ * 'processing' forever (they are never re-claimed by a worker). Run once at
+ * boot, right after the schema is ensured.
+ */
+function reclaimOrphanedJobs(database: DatabaseSync): void {
+  try {
+    const result = database
+      .prepare(`UPDATE jobs SET status = 'queued', updated_at = ? WHERE status = 'processing'`)
+      .run(new Date().toISOString());
+    const requeued = Number(result.changes ?? 0);
+    if (requeued > 0) {
+      console.log(`[queue] re-queued ${requeued} orphaned job(s) stuck in 'processing' at boot`);
+    }
+  } catch (err) {
+    console.warn(
+      `[queue] failed to reclaim orphaned jobs at boot: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export function closeDb(): void {

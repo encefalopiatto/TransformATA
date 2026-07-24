@@ -1,13 +1,20 @@
-import { evaluateExpression } from '@transformata/shared';
 import type { EvalResult } from '@transformata/shared';
+import { evaluateIsolated } from './jsonata-worker.js';
 import { getSettings } from './settings.js';
 
 /**
  * Evaluate a JSONata expression with the configured timeout, returning the
  * typed EvalResult (never throws).
+ *
+ * Evaluation runs in an isolated worker thread (see `jsonata-worker.ts`) so a
+ * runaway expression is hard-terminated at the timeout instead of blocking the
+ * main event loop. This is the single choke point for ALL server-side
+ * evaluation: the pipeline engine (routing match + normalize/transform/
+ * denormalize), the admin `POST /api/admin/evaluate` route, and the admin
+ * funnel-test path all go through here.
  */
 export async function evalJsonata(expression: string, input: unknown): Promise<EvalResult> {
-  return evaluateExpression(expression, input, getSettings().evaluateTimeoutMs);
+  return evaluateIsolated(expression, input, getSettings().evaluateTimeoutMs);
 }
 
 /**

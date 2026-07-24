@@ -23,15 +23,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './editor.css';
-import type { CompileResult, TransformConfig } from '@transformata/shared';
-import {
-  compileGraph,
-  evaluateExpression,
-  jsonataSyntaxError,
-  specByKey,
-  type NodeSpec,
-} from '@transformata/shared';
+import type { CompileResult, EvalResult, TransformConfig } from '@transformata/shared';
+import { compileGraph, jsonataSyntaxError, specByKey, type NodeSpec } from '@transformata/shared';
 import { api, ApiRequestError } from '../api';
+import { useUnsavedGuard } from '../nav-guard';
+import type { EvalRequest } from './evalWorker';
 import { ErrorBanner, Loading } from '../components/ui';
 import { DRAG_MIME, Palette } from './Palette';
 import { Inspector } from './Inspector';
@@ -108,6 +104,25 @@ function EditorInner({ transformId }: { transformId: string }) {
   const reactFlow = useReactFlow<TfaFlowNode>();
   const canvasRef = useRef<HTMLDivElement>(null);
   const addCascade = useRef(0);
+  const workerRef = useRef<Worker | null>(null);
+
+  const getWorker = useCallback((): Worker => {
+    if (!workerRef.current) {
+      workerRef.current = new Worker(new URL('./evalWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+    }
+    return workerRef.current;
+  }, []);
+
+  // Terminate any live preview worker when the editor unmounts.
+  useEffect(
+    () => () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    },
+    [],
+  );
 
   /* ------------------------------- load ------------------------------- */
 
@@ -207,22 +222,57 @@ function EditorInner({ transformId }: { transformId: string }) {
       return;
     }
     let cancelled = false;
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
     setPreview((p) => ({ ...p, state: 'running' }));
-    const timer = setTimeout(() => {
-      void evaluateExpression(expression, sample.value, 5000).then((result) => {
+    // Debounce, then evaluate in a Web Worker so a runaway expression cannot
+    // freeze the tab. Race the reply against a hard timeout: on timeout we kill
+    // the worker (terminate) and respawn a fresh one on the next run.
+    const debounce = setTimeout(() => {
+      if (cancelled) return;
+      const worker = getWorker();
+      raceTimer = setTimeout(() => {
+        worker.terminate();
+        workerRef.current = null;
+        if (!cancelled) {
+          setPreview({
+            state: 'error',
+            text: 'Preview timed out — check for an infinite loop.',
+          });
+        }
+      }, 5000);
+      worker.onmessage = (ev: MessageEvent<EvalResult>) => {
+        clearTimeout(raceTimer);
         if (cancelled) return;
+        const result = ev.data;
         setPreview(
           result.ok
             ? { state: 'ok', text: JSON.stringify(result.output, null, 2) ?? 'null' }
             : { state: 'error', text: result.error },
         );
-      });
+      };
+      worker.onerror = (err) => {
+        clearTimeout(raceTimer);
+        worker.terminate();
+        workerRef.current = null;
+        if (!cancelled) {
+          setPreview({ state: 'error', text: `Preview failed: ${err.message || 'worker error'}` });
+        }
+      };
+      const request: EvalRequest = { expression, input: sample.value };
+      worker.postMessage(request);
     }, 300);
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      clearTimeout(debounce);
+      // If an evaluation was in flight, kill the worker so a runaway job can't
+      // linger and block the next evaluation queued on the same worker.
+      if (raceTimer !== undefined) {
+        clearTimeout(raceTimer);
+        workerRef.current?.terminate();
+        workerRef.current = null;
+      }
     };
-  }, [expression, sample]);
+  }, [expression, sample, getWorker]);
 
   /* --------------------------- graph editing -------------------------- */
 
@@ -416,37 +466,67 @@ function EditorInner({ transformId }: { transformId: string }) {
 
   const save = useCallback(async () => {
     if (!transform || saving) return;
+    // Visual mode with a graph that does not compile: block the save entirely.
+    // Persisting the errored graph while silently keeping the old executable
+    // jsonata would leave the pipeline running a stale mapping. Re-open the
+    // error panel so the reason is obvious.
+    if (mode === 'visual' && compileErrors.length > 0) {
+      setErrorsDismissed(false);
+      setSaveError(null);
+      return;
+    }
+    // Code mode with invalid JSONata: jobs using this mapping will fail. Let
+    // power users stage WIP, but only after an explicit confirmation.
+    if (mode === 'code' && codeSyntaxError !== null) {
+      const ok = window.confirm(
+        'This JSONata has a syntax error and jobs using it will fail. Save anyway?',
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     setSaveError(null);
-    const body: TransformConfig = { ...transform };
+    const body: Partial<TransformConfig> = { ...transform };
     // Only update the sample when its text is valid JSON (empty clears it).
     if (sample.ok) {
       body.sampleInput = sampleText.trim() === '' ? null : sample.value;
     }
     if (mode === 'visual') {
       body.graph = toTGraph(nodes, edges);
+      // Guaranteed compiled.ok here (errored graphs are blocked above).
       body.jsonata = compiled && compiled.ok ? compiled.expression : transform.jsonata;
     } else {
+      // Code mode saves the code but KEEPS the existing graph — the Visual→Code
+      // dialog promises the graph is kept. Send the current graph (reflecting
+      // any visual edits made this session) instead of nulling it. When there
+      // is no graph, the spread from `transform` leaves it unchanged.
       body.jsonata = code;
-      body.graph = null;
+      if (hasGraph) body.graph = toTGraph(nodes, edges);
     }
     try {
       const saved = await api.updateTransform(transformId, body);
       setTransform(saved);
       setDirty(false);
       setSavedOnce(true);
-      if (mode === 'code') {
-        // The graph is now detached server-side.
-        setHasGraph(false);
-        setNodes([]);
-        setEdges([]);
-      }
     } catch (err) {
       setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
     }
-  }, [transform, saving, sample, sampleText, mode, nodes, edges, compiled, code, transformId]);
+  }, [
+    transform,
+    saving,
+    sample,
+    sampleText,
+    mode,
+    hasGraph,
+    nodes,
+    edges,
+    compiled,
+    compileErrors.length,
+    codeSyntaxError,
+    code,
+    transformId,
+  ]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -458,6 +538,12 @@ function EditorInner({ transformId }: { transformId: string }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [save]);
+
+  // Warn before leaving (tab close / refresh / in-app nav) with unsaved changes.
+  useUnsavedGuard(
+    dirty,
+    'You have unsaved changes in this mapping. Leave without saving?',
+  );
 
   /* ------------------------------- render ----------------------------- */
 
@@ -479,6 +565,9 @@ function EditorInner({ transformId }: { transformId: string }) {
   }
 
   const showErrorsPanel = mode === 'visual' && compileErrors.length > 0 && !errorsDismissed;
+  // Block saving while the visual graph has compile errors — saving would
+  // persist an errored graph while leaving the running expression stale.
+  const saveBlocked = mode === 'visual' && compileErrors.length > 0;
 
   return (
     <div className="tfa-ed">
@@ -502,7 +591,11 @@ function EditorInner({ transformId }: { transformId: string }) {
           </button>
         </div>
         <div className="tfa-ed-actions">
-          {dirty ? (
+          {saveBlocked ? (
+            <span className="tfa-ed-block-msg" role="status">
+              Fix the graph errors before saving
+            </span>
+          ) : dirty ? (
             <span className="tfa-ed-dirty">● Unsaved changes</span>
           ) : savedOnce ? (
             <span className="tfa-ed-saved">✓ Saved</span>
@@ -510,9 +603,9 @@ function EditorInner({ transformId }: { transformId: string }) {
           <button
             type="button"
             className="btn primary"
-            disabled={saving}
+            disabled={saving || saveBlocked}
             onClick={() => void save()}
-            title="Save (Ctrl/Cmd+S)"
+            title={saveBlocked ? 'Fix the graph errors before saving' : 'Save (Ctrl/Cmd+S)'}
           >
             {saving ? 'Saving…' : 'Save'}
           </button>

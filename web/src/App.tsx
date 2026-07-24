@@ -1,5 +1,7 @@
+import type { MouseEvent } from 'react';
 import { NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { ToastProvider } from './components/Toasts';
+import { NavGuardProvider, useNavGuardApi } from './nav-guard';
 import EditorScreen from './editor/EditorScreen';
 import MonitorPage from './pages/MonitorPage';
 import JobDetailPage from './pages/JobDetailPage';
@@ -32,8 +34,24 @@ const NAV = [
 export default function App() {
   return (
     <ToastProvider>
+      <NavGuardProvider>
+        <AppShell />
+      </NavGuardProvider>
+    </ToastProvider>
+  );
+}
+
+function AppShell() {
+  const navGuard = useNavGuardApi();
+  // Block navigation away from an editor with unsaved changes (the editor
+  // registers the guard). preventDefault stops React Router's Link handler.
+  const onNavClick = (event: MouseEvent) => {
+    if (!navGuard.check()) event.preventDefault();
+  };
+  return (
+    <>
       <header className="topbar">
-        <NavLink to="/" className="brand">
+        <NavLink to="/" className="brand" onClick={onNavClick}>
           <span className="brand-mark" aria-hidden>
             T
           </span>
@@ -45,6 +63,7 @@ export default function App() {
               key={item.to}
               to={item.to}
               end={item.end}
+              onClick={onNavClick}
               className={({ isActive }) => (isActive ? 'active' : undefined)}
             >
               {item.label}
@@ -66,6 +85,6 @@ export default function App() {
         <Route path="/admin/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </ToastProvider>
+    </>
   );
 }
