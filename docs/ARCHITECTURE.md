@@ -64,6 +64,16 @@ and (on ephemeral hosts like Render's free tier) can be committed to the
 repo and loaded at boot. The admin panel also offers export/import of the
 full `ConfigBundle`.
 
+The live config directory defaults to `<repo>/config` and can be relocated
+with **`TRANSFORMATA_CONFIG_DIR`** (e.g. onto a persistent disk:
+`render.yaml` points it at `data/config` inside the mounted disk). When the
+env var targets a directory other than the repo's `config/`, it is **seeded
+on first boot**: the repo tree is copied in without overwriting anything,
+then a `.seeded-from-repo` marker makes every later boot leave the directory
+untouched — the external directory is the source of truth from then on, so
+UI edits *and deletions* survive redeploys. Deleting the marker re-runs the
+non-destructive copy (picks up new repo seed files; never overwrites).
+
 ```
 config/
   settings.json            AppSettings

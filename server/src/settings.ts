@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type { AppSettings } from '@transformata/shared';
-import { fromRoot } from './root.js';
+import { fromConfigRoot } from './root.js';
 
 export type ResolvedSettings = Required<AppSettings>;
 
@@ -20,7 +20,7 @@ export function getSettings(): ResolvedSettings {
   if (cached) return cached;
 
   let fromFile: AppSettings = {};
-  const file = fromRoot('config', 'settings.json');
+  const file = fromConfigRoot('settings.json');
   if (fs.existsSync(file)) {
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));

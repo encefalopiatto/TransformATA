@@ -58,15 +58,33 @@ End-to-end check: `npm run smoke`.
 Every stage records status, timing, and a data snapshot — visible in the
 monitor's job detail view.
 
-## Deploying on Render (free tier)
+## Deploying on Render
 
 The repo ships a [`render.yaml`](render.yaml) blueprint: create a new
 **Blueprint** on [Render](https://render.com), point it at this repository,
-and it deploys a single free web service (build `npm install && npm run
-build`, start `npm start`, health check `/api/health`). Requires **Node ≥
+and it deploys a single web service (build `npm install && npm run
+build`, start `npm start`, health check `/api/health`) on a paid plan
+(`starter` — edit `plan:` if you chose another) with a **1 GB persistent
+disk** mounted at `/opt/render/project/src/data`. Requires **Node ≥
 22.13** (the queue uses the built-in `node:sqlite` — no native module to
 compile); `render.yaml` pins `NODE_VERSION=22`, which resolves to a
 qualifying release.
+
+The disk makes the deployment fully stateful:
+
+- **Job history** (SQLite), canonical snapshots, and outbox files live under
+  `data/` and survive deploys and restarts.
+- **Config edits persist too**: `render.yaml` sets
+  `TRANSFORMATA_CONFIG_DIR=/opt/render/project/src/data/config`, so funnels,
+  mappings, endpoints, and settings are read from (and written to) the disk.
+  On **first boot** the directory is seeded from the repo's `config/` tree;
+  after that the disk is the source of truth — admin-panel edits (including
+  deletions) survive redeploys and are never overwritten or resurrected by
+  the repo seeds. To pick up *new* seed files added to the repo later, delete
+  the `.seeded-from-repo` marker in the config dir (existing files are never
+  overwritten by re-seeding), or import them via **Settings → Import**.
+- Note: attaching a disk pins the service to a single instance and disables
+  zero-downtime deploys — fine here, the SQLite queue assumes one process.
 
 > **Deploy the branch that actually contains this code.** Render builds the
 > branch its service/Blueprint is configured for — by default `main`. If that
@@ -78,19 +96,21 @@ qualifying release.
 > `npm install && npm run build && npm start` from a clean clone of the full
 > tree is verified to succeed.
 
-Free-tier constraints and how TransformATA handles them:
+Platform constraints that still apply on Render:
 
-- **Ephemeral filesystem** — job history (SQLite) and admin-panel config
-  edits reset on redeploy/restart. Configs committed under `config/` are
-  loaded at boot; after editing configs in the UI use **Settings → Export**
-  and commit the bundle back to the repo (or re-import it).
 - **HTTP only** — the embedded SFTP *server* can't run on Render (no raw
   TCP). Use `sftp-poll` inbound endpoints instead: the app connects out to
   any remote SFTP server and ingests new files on an interval. Outbound
   SFTP works normally. Self-hosted deployments can enable the embedded SFTP
   server with `SFTP_SERVER_ENABLED=true` (port `settings.sftpPort`, default 4122).
-- **Spin-down after inactivity** — the first request after idle takes ~30s
-  (also delays `sftp-poll` ticks while asleep).
+
+Running on the **free tier** instead (no disk support): everything works but
+state is ephemeral — job history and admin-panel config edits reset on
+redeploy/restart (use **Settings → Export** and commit the bundle back to
+the repo), and the instance spins down after inactivity, so the first
+request after idle takes ~30s (which also delays `sftp-poll` ticks). Set
+`plan: free` and drop the `disk:` block and `TRANSFORMATA_CONFIG_DIR` from
+`render.yaml`.
 
 ⚠️ The admin and monitor APIs are **unauthenticated** in this MVP. Inbound
 API endpoints require per-endpoint API keys, but anyone with the app URL can

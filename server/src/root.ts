@@ -50,6 +50,63 @@ export function fromRoot(...segments: string[]): string {
 }
 
 /**
+ * Locate the live config directory (settings.json + endpoints/funnels/
+ * mapping subdirectories). Default: `<repoRoot>/config`. When
+ * TRANSFORMATA_CONFIG_DIR is set (e.g. pointing into a persistent disk on
+ * Render), that directory is used instead and is seeded once from the repo's
+ * `config/` tree on first boot — see `ensureSeededFromRepo`.
+ */
+let cachedConfigRoot: string | undefined;
+
+export function configRoot(): string {
+  if (cachedConfigRoot) return cachedConfigRoot;
+  const fromEnv = process.env.TRANSFORMATA_CONFIG_DIR;
+  if (!fromEnv || fromEnv.trim() === '') {
+    cachedConfigRoot = fromRoot('config');
+    return cachedConfigRoot;
+  }
+  const dir = path.resolve(fromEnv.trim());
+  ensureSeededFromRepo(dir);
+  cachedConfigRoot = dir;
+  return cachedConfigRoot;
+}
+
+/** Resolve a path relative to the live config directory. */
+export function fromConfigRoot(...segments: string[]): string {
+  return path.resolve(configRoot(), ...segments);
+}
+
+const SEED_MARKER = '.seeded-from-repo';
+
+/**
+ * First-boot seeding for an external config directory: copy the repo's
+ * `config/` tree into `dir`, never overwriting files that already exist,
+ * then drop a marker file so later boots leave the directory alone entirely
+ * (the external directory is the source of truth from then on — deletions
+ * made through the admin panel must not be resurrected by the repo seeds on
+ * the next deploy). Deleting the marker re-runs the non-destructive copy on
+ * the next boot, which is the supported way to pick up new repo seed files.
+ */
+function ensureSeededFromRepo(dir: string): void {
+  const seedSrc = fromRoot('config');
+  if (dir === path.resolve(seedSrc)) return; // pointing at the repo config — nothing to seed
+  const marker = path.join(dir, SEED_MARKER);
+  if (fs.existsSync(marker)) return;
+  fs.mkdirSync(dir, { recursive: true });
+  if (fs.existsSync(seedSrc)) {
+    fs.cpSync(seedSrc, dir, { recursive: true, force: false, errorOnExist: false });
+    console.log(`[config] seeded ${dir} from ${seedSrc} (first boot)`);
+  }
+  fs.writeFileSync(
+    marker,
+    `Seeded from ${seedSrc} at ${new Date().toISOString()}.\n` +
+      `This directory is now the source of truth for TransformATA config.\n` +
+      `Delete this file to re-copy missing repo seed files on next boot (existing files are never overwritten).\n`,
+    'utf8',
+  );
+}
+
+/**
  * Resolve a directory path relative to the repo root, ensuring the result
  * stays within that root (defence against path traversal / absolute-path
  * escapes on the unauthenticated admin API). Throws a plain Error when the

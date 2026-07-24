@@ -9,7 +9,7 @@ import type {
 } from '@transformata/shared';
 import { badRequest, conflict, notFound } from './errors.js';
 import { generateConfigId } from './ids.js';
-import { fromRoot, resolveContainedDir } from './root.js';
+import { fromConfigRoot, resolveContainedDir } from './root.js';
 
 /**
  * File-backed config store. One JSON file per object, filename `<id>.json`.
@@ -17,13 +17,15 @@ import { fromRoot, resolveContainedDir } from './root.js';
  * go straight to disk.
  */
 
-const ENDPOINTS_DIR = ['config', 'endpoints'];
-const FUNNELS_DIR = ['config', 'funnels'];
+// Segments are relative to the live config root (repo `config/` by default,
+// TRANSFORMATA_CONFIG_DIR when set — e.g. a persistent disk on Render).
+const ENDPOINTS_DIR = ['endpoints'];
+const FUNNELS_DIR = ['funnels'];
 
 export const TRANSFORM_DIRS: Record<TransformKind, string[]> = {
-  normalization: ['config', 'normalizations'],
-  transformation: ['config', 'transformations'],
-  denormalization: ['config', 'denormalizations'],
+  normalization: ['normalizations'],
+  transformation: ['transformations'],
+  denormalization: ['denormalizations'],
 };
 
 export const TRANSFORM_KINDS: TransformKind[] = [
@@ -35,7 +37,7 @@ export const TRANSFORM_KINDS: TransformKind[] = [
 /* ----------------------------- file helpers ----------------------------- */
 
 function dirPath(segments: string[]): string {
-  return fromRoot(...segments);
+  return fromConfigRoot(...segments);
 }
 
 function readAll<T extends { id: string }>(segments: string[]): T[] {

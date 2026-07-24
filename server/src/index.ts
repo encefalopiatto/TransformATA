@@ -7,7 +7,7 @@ import { startSftpPollers } from './ingress/sftp-poll.js';
 import { startSftpServer } from './ingress/sftp-server.js';
 import { closeDb, getDb } from './queue/db.js';
 import { startWorkers } from './queue/queue.js';
-import { fromRoot, repoRoot } from './root.js';
+import { configRoot, fromRoot, repoRoot } from './root.js';
 import { getSettings } from './settings.js';
 
 function ensureDataDirs(): void {
@@ -36,6 +36,7 @@ function main(): void {
     const transforms = listTransforms();
     console.log('TransformATA server started');
     console.log(`  root:        ${repoRoot()}`);
+    console.log(`  config dir:  ${configRoot()}`);
     console.log(`  http:        http://0.0.0.0:${settings.httpPort}`);
     console.log(
       `  sftp server: ${settings.sftpServerEnabled ? `enabled on port ${settings.sftpPort}` : 'disabled'}`,
