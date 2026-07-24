@@ -30,6 +30,9 @@ spec for both the compiler and the editor UI.
   matching `/^[A-Za-z_][A-Za-z0-9_]*$/` or a numeric array index like `[0]`
   appended to a segment (e.g. `rows[0].partner`). Segments that don't match
   the identifier pattern must be emitted backtick-quoted (`` `weird name` ``).
+  The segments `true`, `false` and `null` match the identifier pattern but are
+  JSONata keyword literals, so they too must be backtick-quoted (`` `true` ``)
+  to read a field of that name rather than the boolean/null value.
   A leading `$` is not allowed in the stored path (context is expressed by
   wiring, not by the path text).
 
@@ -55,7 +58,7 @@ graph mirrors this:
 | `input` | — | — | `$$` |
 | `item` | — | — | `$` |
 | `path` | `in` (optional) | `{ path }` | wired: `E(in).<path>` · unwired: `<path>` (context-relative) |
-| `literal` | — | `{ value }` | `JSON.stringify(value)` (any JSON value) |
+| `literal` | — | `{ value }` | `JSON.stringify(value)` for string/object/array literals; number, boolean and `null` literals are parenthesized (`(5)`, `(true)`, `(null)`) so they can be safely wired into a path chain (`5.foo` is a parse error, `(5).foo` parses) |
 
 ### Structure
 
@@ -68,14 +71,29 @@ graph mirrors this:
 
 | type | inputs | data | emit |
 |---|---|---|---|
-| `map` | `array` (req), `each` (req) | — | `[(E(array)).(E(each))]` |
-| `filter` | `array` (req), `predicate` (req) | — | `[(E(array))[E(predicate)]]` |
+| `map` | `array` (req), `each` (req) | — | array-valued `each` (map/filter/array/sort/distinct/split): `[$map(E(array), function($i){ $i.(E(each)) })]`; otherwise `[(E(array)).(E(each))]` |
+| `filter` | `array` (req), `predicate` (req) | — | `[(E(array))[$boolean(E(predicate))]]` |
 | `sort` | `in` (req) | `{ by?, descending? }` | with `by`, asc: `$sort(E(in), function($l, $r) { $l.<by> > $r.<by> })`; desc: `<` instead of `>`. Without `by`, asc: `$sort(E(in))`; desc: `$reverse($sort(E(in)))` |
 | `distinct` | `in` (req) | — | `$distinct(E(in))` |
 
-Notes: the `[...]` wrapper on map/filter keeps the result an array even for
-single-element results (JSONata sequence flattening). Inside `each` /
-`predicate` subtrees, `item` = the current element and relative `path`
+Notes: the outer `[...]` wrapper on map/filter keeps the result an array even
+for single-element results (JSONata sequence flattening). `map` chooses its
+step by whether `each` yields an array:
+
+- **array-valued `each`** (its source node is a map/filter/array/sort/distinct
+  or a split string op) uses `$map(E(array), function($i){ $i.(E(each)) })` so
+  each per-item array stays a distinct element — nested maps preserve nesting
+  (`[["a","b"],["c"]]`) instead of `.` flattening them together.
+- **every other `each`** (scalar, object, aggregation, path, …) uses
+  `(E(array)).(E(each))`, whose `.` binds `$` to the whole element — correct
+  even when the element is itself an array (e.g. summing an array-valued item),
+  which the `$map`/`$i.(each)` form would wrongly descend into.
+
+Both keep `$` = the current item for the `each` subtree, so `item` nodes emit
+`$` and relative paths stay bare. `filter` wraps the predicate in
+`$boolean(...)` so a non-boolean predicate (e.g. a numeric field) is evaluated
+as a truth test rather than as JSONata positional index selection. Inside
+`each` / `predicate` subtrees, `item` = the current element and relative `path`
 nodes (unwired `in`) resolve against it.
 
 ### Text (`stringOp`, data `{ op, ... }`)
@@ -115,7 +133,7 @@ nodes (unwired `in`) resolve against it.
 
 | type | inputs | data | emit |
 |---|---|---|---|
-| `raw` | `context` (optional) | `{ expression }` | wired: `((E(context)).(<expression>))` · unwired: `(<expression>)` — expression inserted verbatim; compiler validates it parses with `jsonata()` and reports syntax errors as node errors |
+| `raw` | `context` (optional) | `{ expression }` | wired: `((E(context)).(<expression>))` · unwired: `(<expression>)` — expression inserted verbatim; compiler validates it parses with `jsonata()` and reports syntax errors as node errors. When wired, the expression runs against the wired context; if that context is a list it runs once per item (JSONata `.` semantics) |
 | `output` | `in` (req) | — | `E(in)` — the graph's result |
 
 ## Example
@@ -135,7 +153,7 @@ input ─(in)─ path[rows] ─(array)─ filter ─(array)─ map ─(in)─ ou
 compiles to (whitespace aside):
 
 ```jsonata
-[($$.rows)[(status != "cancelled")].({ "sku": sku, "total": ($number(qty) * $number(unit_price)) })]
+[$map([($$.rows)[$boolean((status != "cancelled"))]], function($i){ $i.({ "sku": sku, "total": ($number(qty) * $number(unit_price)) }) })]
 ```
 
 ## Compiler API

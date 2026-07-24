@@ -63,7 +63,20 @@ monitor's job detail view.
 The repo ships a [`render.yaml`](render.yaml) blueprint: create a new
 **Blueprint** on [Render](https://render.com), point it at this repository,
 and it deploys a single free web service (build `npm install && npm run
-build`, start `npm start`, health check `/api/health`).
+build`, start `npm start`, health check `/api/health`). Requires **Node ≥
+22.13** (the queue uses the built-in `node:sqlite` — no native module to
+compile); `render.yaml` pins `NODE_VERSION=22`, which resolves to a
+qualifying release.
+
+> **Deploy the branch that actually contains this code.** Render builds the
+> branch its service/Blueprint is configured for — by default `main`. If that
+> branch only has an early scaffold, the build fails with
+> `error TS18003: No inputs were found in config file server/tsconfig.json`
+> (there is no `server/src` to compile yet). Fix it by making the full app
+> the head of the deployed branch: merge the feature branch into `main`, or
+> set the Render service's branch to the feature branch. A fresh
+> `npm install && npm run build && npm start` from a clean clone of the full
+> tree is verified to succeed.
 
 Free-tier constraints and how TransformATA handles them:
 

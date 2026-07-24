@@ -34,8 +34,10 @@ export async function evaluateExpression(
 
 function message(err: unknown): string {
   if (err instanceof Error) return err.message;
+  // jsonata throws plain objects (not Error) carrying a string `message`.
   if (typeof err === 'object' && err !== null && 'message' in err) {
-    return String((err as { message: unknown }).message);
+    const m = (err as { message: unknown }).message;
+    if (typeof m === 'string') return m;
   }
   return String(err);
 }

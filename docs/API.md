@@ -47,7 +47,8 @@ Types referenced below are defined in `shared/src/types.ts`.
   defaults to `"$"` — identity).
 - `GET /api/admin/transforms/:id` → `TransformConfig`
 - `PUT /api/admin/transforms/:id` body: full or partial `TransformConfig`
-  (id/kind immutable) → updated `TransformConfig`
+  → updated `TransformConfig`. **MERGE semantics** (the editor sends partial
+  updates); `id` and `kind` are immutable.
 - `DELETE /api/admin/transforms/:id` → `204`. `409 { error }` if referenced by a funnel.
 
 ## Admin — funnels
@@ -55,7 +56,12 @@ Types referenced below are defined in `shared/src/types.ts`.
 - `GET /api/admin/funnels` → `FunnelConfig[]` (sorted by priority)
 - `POST /api/admin/funnels` body: `FunnelConfig` without id → `201 FunnelConfig`
 - `GET /api/admin/funnels/:id` → `FunnelConfig`
-- `PUT /api/admin/funnels/:id` → updated `FunnelConfig`
+- `PUT /api/admin/funnels/:id` → updated `FunnelConfig`. **REPLACE semantics**:
+  the stored funnel is fully replaced by the request body (only `id` is
+  preserved), so the client MUST send the complete funnel object. This is how
+  optional fields (e.g. inbound endpoint restrictions) get cleared — a merge
+  would leave stale values behind. Unknown/extra keys are ignored. An empty
+  csv delimiter in `inputOptions`/`outputOptions` is defaulted to `,`.
 - `DELETE /api/admin/funnels/:id` → `204`
 - `POST /api/admin/funnels/:id/test` body `TestFunnelRequest`
   → `200 TestFunnelResponse` — runs the full pipeline in-memory (parse using
@@ -67,7 +73,14 @@ Types referenced below are defined in `shared/src/types.ts`.
 - `GET /api/admin/endpoints?direction=` → `Endpoint[]`
 - `POST /api/admin/endpoints` body: `Endpoint` without id → `201 Endpoint`
 - `GET /api/admin/endpoints/:id` → `Endpoint`
-- `PUT /api/admin/endpoints/:id` → updated `Endpoint`
+- `PUT /api/admin/endpoints/:id` → updated `Endpoint`. **REPLACE semantics**:
+  the stored endpoint is fully replaced by the request body (only `id` is
+  preserved; `kind` is immutable — a changed kind is rejected with `400`), so
+  the client MUST send the complete endpoint object. This lets optional fields
+  (stale headers, credentials) be cleared instead of persisting through a
+  merge. Unknown/extra keys are ignored. For outbound `directory` endpoints the
+  `path` must resolve inside the project root (`400` otherwise) unless
+  `TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX=true`.
 - `DELETE /api/admin/endpoints/:id` → `204`. `409` if referenced by a funnel.
 - `POST /api/admin/endpoints/:id/test` body `{ "content"?: string }`
   → `200 TestEndpointResponse` — outbound endpoints only: delivers a small

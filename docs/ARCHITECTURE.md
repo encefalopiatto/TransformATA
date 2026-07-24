@@ -106,7 +106,8 @@ The embedded SFTP server is enabled via `SFTP_SERVER_ENABLED=true` (or
 
 ## Queue
 
-SQLite (`better-sqlite3`), no external broker: jobs table holds metadata,
+SQLite (Node's built-in `node:sqlite`, no native module to compile — this is
+why the project requires Node >= 22.13), no external broker: jobs table holds metadata,
 stage records, raw payload, and output info. An in-process worker pool
 (`workerConcurrency`) claims queued jobs and runs the pipeline. Every job
 state change is broadcast on an in-process event bus, streamed to the
@@ -134,8 +135,19 @@ change.
 - Inbound API endpoints authenticate with per-endpoint API keys.
 - Admin + monitor APIs are unauthenticated in this MVP — front the service
   with access restrictions if exposed publicly, or add auth before real use.
-- JSONata evaluation is time-boxed (`evaluateTimeoutMs`) to contain runaway
-  expressions.
+- JSONata evaluation runs in an **isolated worker thread** (`server/src/
+  jsonata-worker.ts`) that is hard-terminated after `evaluateTimeoutMs`. A
+  cooperative in-process timeout cannot interrupt a synchronous/CPU-bound
+  expression — the single event loop would stay blocked until it returned,
+  a denial-of-service vector on the unauthenticated admin + pipeline surfaces.
+  The worker isolates the evaluation so `worker.terminate()` reclaims a runaway
+  while the main event loop stays responsive. All server-side evaluation
+  (routing match, normalize/transform/denormalize, `POST /api/admin/evaluate`,
+  funnel test) is funneled through `jsonata-runner.ts` → the worker. The cost
+  is ~tens of ms per evaluation, which is acceptable for this workload.
+- Outbound `directory` endpoints are constrained to the project root: an
+  absolute or `../..` path is rejected on save and at delivery time, unless
+  `TRANSFORMATA_ALLOW_ABSOLUTE_OUTBOX=true` (opt-in for self-hosted use).
 
 ## Deploy (Render)
 
