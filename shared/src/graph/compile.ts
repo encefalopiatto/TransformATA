@@ -11,7 +11,7 @@ import type {
   TGraphEdge,
   TGraphNode,
 } from '../types.js';
-import { resolveInputHandles, specForNode } from './catalog.js';
+import { clampCount, resolveInputHandles, specForNode } from './catalog.js';
 
 export * from './catalog.js';
 
@@ -251,6 +251,36 @@ function wired(node: TGraphNode, handle: string, ctx: Ctx): string | undefined {
   return source ? emitNode(source, ctx) : undefined;
 }
 
+/** The node wired into `handle`, or undefined. */
+function sourceNode(node: TGraphNode, handle: string, ctx: Ctx): TGraphNode | undefined {
+  const sourceId = ctx.incoming.get(node.id)?.get(handle);
+  return sourceId === undefined ? undefined : ctx.nodeMap.get(sourceId);
+}
+
+/**
+ * Node types whose emitted expression always yields an array. A Map whose
+ * `each` is one of these must use `$map` so per-item arrays are preserved as
+ * distinct elements (nested map / build-array / split / inner filter / sort /
+ * distinct). Every other `each` (scalar, object, aggregation, path, …) uses
+ * the `.` form, which binds `$` to the whole element even when that element is
+ * itself an array — so aggregating over an array-valued item stays correct.
+ */
+function producesArray(node: TGraphNode | undefined): boolean {
+  if (!node) return false;
+  switch (node.type) {
+    case 'map':
+    case 'filter':
+    case 'array':
+    case 'sort':
+    case 'distinct':
+      return true;
+    case 'stringOp':
+      return (node.data?.op as string | undefined) === 'split';
+    default:
+      return false;
+  }
+}
+
 /** Emitted expression of a required input; error + "null" when unwired. */
 function required(node: TGraphNode, handle: string, label: string, ctx: Ctx): string {
   const expr = wired(node, handle, ctx);
@@ -371,9 +401,9 @@ function emitInner(node: TGraphNode, ctx: Ctx): string {
     }
 
     case 'array': {
-      const count = typeof data.count === 'number' && Number.isFinite(data.count)
-        ? Math.max(0, Math.floor(data.count))
-        : 2;
+      // clampCount matches resolveInputHandles so a wired slot is never also
+      // flagged as an "unknown input".
+      const count = clampCount(data.count, 2);
       const items: string[] = [];
       for (let i = 0; i < count; i++) {
         const item = wired(node, `item:${i}`, ctx);
@@ -392,10 +422,18 @@ function emitInner(node: TGraphNode, ctx: Ctx): string {
     case 'map': {
       const array = required(node, 'array', 'array', ctx);
       const each = required(node, 'each', 'each', ctx);
-      // $map (not `.`) so that a per-item array result is not flattened across
-      // items; `$i.(each)` keeps `$` = the current item for the each subtree.
-      // The outer [...] forces an array and prevents single-element collapse.
-      return `[$map(${array}, function($i){ $i.(${each}) })]`;
+      // Two emits, chosen by whether `each` yields an array (see producesArray):
+      // - array-valued each (nested map, build-array, split, inner filter, …):
+      //   `$map` keeps each per-item array a distinct element instead of
+      //   flattening them together (JSONata `.` would merge them).
+      // - everything else: `.` binds `$` to the whole element — correct even
+      //   when the element is itself an array (e.g. summing an array item),
+      //   which the `$map`/`$i.(each)` form would wrongly descend into.
+      // Both wrap in [...] to force an array and avoid single-element collapse.
+      if (producesArray(sourceNode(node, 'each', ctx))) {
+        return `[$map(${array}, function($i){ $i.(${each}) })]`;
+      }
+      return `[(${array}).(${each})]`;
     }
 
     case 'filter': {
@@ -425,9 +463,7 @@ function emitInner(node: TGraphNode, ctx: Ctx): string {
     case 'stringOp': {
       const op = readString(data, 'op') ?? '';
       if (op === 'concat') {
-        const count = typeof data.count === 'number' && Number.isFinite(data.count)
-          ? Math.max(0, Math.floor(data.count))
-          : 2;
+        const count = clampCount(data.count, 2);
         const parts: string[] = [];
         for (let i = 0; i < count; i++) {
           const part = wired(node, `in:${i}`, ctx);

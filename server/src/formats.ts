@@ -114,8 +114,17 @@ export function serializeDocument(
     case 'xml': {
       const rootName = options?.xml?.rootName ?? 'root';
       const attributeNamePrefix = options?.xml?.attributePrefix ?? '@_';
-      const wrapped =
-        isPlainObject(doc) && Object.keys(doc).length === 1 ? doc : { [rootName]: doc ?? null };
+      // Emit exactly one root element. fast-xml-parser repeats a key once per
+      // array element, so a bare array — or a single-key object whose value is
+      // an array (e.g. { Line: [...] }) — would otherwise produce multiple
+      // sibling roots (invalid XML). Only pass an object straight through when
+      // its single key holds a non-array value.
+      const keys = isPlainObject(doc) ? Object.keys(doc) : [];
+      const wrapped = Array.isArray(doc)
+        ? { [rootName]: { item: doc } }
+        : keys.length === 1 && !Array.isArray((doc as Record<string, unknown>)[keys[0]])
+          ? doc
+          : { [rootName]: doc ?? null };
       try {
         const builder = new XMLBuilder({
           ignoreAttributes: false,

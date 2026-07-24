@@ -96,7 +96,7 @@ describe('compileGraph — full example from docs/GRAPH_NODES.md', () => {
   it('compiles to the specced expression', () => {
     const { expression, warnings } = compileOk(g);
     expect(expression).toBe(
-      '[$map([($$.rows)[$boolean((status != "cancelled"))]], function($i){ $i.({ "sku": sku, "total": ($number(qty) * $number(unit_price)) }) })]',
+      '[([($$.rows)[$boolean((status != "cancelled"))]]).({ "sku": sku, "total": ($number(qty) * $number(unit_price)) })]',
     );
     expect(warnings).toEqual([]);
   });
@@ -361,7 +361,7 @@ describe('number aggregation', () => {
     );
     const { expression } = compileOk(g);
     expect(expression).toBe(
-      '$round($sum([$map($$.lines, function($i){ $i.((qty * price)) })]), 2)',
+      '$round($sum([($$.lines).((qty * price))]), 2)',
     );
     await expect(
       evalOk(expression, { lines: [{ qty: 3, price: 0.5 }, { qty: 2, price: 0.407 }] }),
@@ -424,13 +424,40 @@ describe('map does not flatten per-item array results', () => {
     );
     const { expression } = compileOk(g);
     expect(expression).toBe(
-      '[$map($$.groups, function($i){ $i.([$map(items, function($i){ $i.(name) })]) })]',
+      '[$map($$.groups, function($i){ $i.([(items).(name)]) })]',
     );
     await expect(
       evalOk(expression, {
         groups: [{ items: [{ name: 'a' }, { name: 'b' }] }, { items: [{ name: 'c' }] }],
       }),
     ).resolves.toEqual([['a', 'b'], ['c']]);
+  });
+
+  it('aggregating a scalar/aggregate each binds $ to the whole (array-valued) item', async () => {
+    // matrix -> map(each = sum(current item))  ==>  [3, 7, 5], NOT descending
+    // into each inner array. Uses the `.` form because sum() is scalar-valued.
+    const g = graph(
+      [
+        n('in', 'input'),
+        n('matrix', 'path', { path: 'matrix' }),
+        n('mp', 'map'),
+        n('cur', 'item'),
+        n('sum', 'numberOp', { op: 'sum' }),
+        n('out', 'output'),
+      ],
+      [
+        e('in -> matrix.in'),
+        e('matrix -> mp.array'),
+        e('cur -> sum.in'),
+        e('sum -> mp.each'),
+        e('mp -> out.in'),
+      ],
+    );
+    const { expression } = compileOk(g);
+    expect(expression).toBe('[($$.matrix).($sum($))]');
+    await expect(
+      evalOk(expression, { matrix: [[1, 2], [3, 4], [5]] }),
+    ).resolves.toEqual([3, 7, 5]);
   });
 
   it('map -> object yields one object per element', async () => {
@@ -453,7 +480,7 @@ describe('map does not flatten per-item array results', () => {
     );
     const { expression } = compileOk(g);
     expect(expression).toBe(
-      '[$map($$.rows, function($i){ $i.({ "sku": sku }) })]',
+      '[($$.rows).({ "sku": sku })]',
     );
     await expect(
       evalOk(expression, { rows: [{ sku: 'A' }, { sku: 'B' }] }),

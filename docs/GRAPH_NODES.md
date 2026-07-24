@@ -71,22 +71,30 @@ graph mirrors this:
 
 | type | inputs | data | emit |
 |---|---|---|---|
-| `map` | `array` (req), `each` (req) | — | `[$map(E(array), function($i){ $i.(E(each)) })]` |
+| `map` | `array` (req), `each` (req) | — | array-valued `each` (map/filter/array/sort/distinct/split): `[$map(E(array), function($i){ $i.(E(each)) })]`; otherwise `[(E(array)).(E(each))]` |
 | `filter` | `array` (req), `predicate` (req) | — | `[(E(array))[$boolean(E(predicate))]]` |
 | `sort` | `in` (req) | `{ by?, descending? }` | with `by`, asc: `$sort(E(in), function($l, $r) { $l.<by> > $r.<by> })`; desc: `<` instead of `>`. Without `by`, asc: `$sort(E(in))`; desc: `$reverse($sort(E(in)))` |
 | `distinct` | `in` (req) | — | `$distinct(E(in))` |
 
 Notes: the outer `[...]` wrapper on map/filter keeps the result an array even
-for single-element results (JSONata sequence flattening). `map` uses `$map`
-(rather than `.`) with a `function($i){ $i.(E(each)) }` step so that an `each`
-that itself yields an array per item (nested map, Build array, Split, an inner
-Filter) is **not** flattened across items — nested maps therefore preserve
-nesting (`[["a","b"],["c"]]`). The `$i.(E(each))` keeps `$` = the current item
-for the `each` subtree, so `item` nodes emit `$` and relative paths stay bare.
-`filter` wraps the predicate in `$boolean(...)` so a non-boolean predicate
-(e.g. a numeric field) is evaluated as a truth test rather than as JSONata
-positional index selection. Inside `each` / `predicate` subtrees, `item` = the
-current element and relative `path` nodes (unwired `in`) resolve against it.
+for single-element results (JSONata sequence flattening). `map` chooses its
+step by whether `each` yields an array:
+
+- **array-valued `each`** (its source node is a map/filter/array/sort/distinct
+  or a split string op) uses `$map(E(array), function($i){ $i.(E(each)) })` so
+  each per-item array stays a distinct element — nested maps preserve nesting
+  (`[["a","b"],["c"]]`) instead of `.` flattening them together.
+- **every other `each`** (scalar, object, aggregation, path, …) uses
+  `(E(array)).(E(each))`, whose `.` binds `$` to the whole element — correct
+  even when the element is itself an array (e.g. summing an array-valued item),
+  which the `$map`/`$i.(each)` form would wrongly descend into.
+
+Both keep `$` = the current item for the `each` subtree, so `item` nodes emit
+`$` and relative paths stay bare. `filter` wraps the predicate in
+`$boolean(...)` so a non-boolean predicate (e.g. a numeric field) is evaluated
+as a truth test rather than as JSONata positional index selection. Inside
+`each` / `predicate` subtrees, `item` = the current element and relative `path`
+nodes (unwired `in`) resolve against it.
 
 ### Text (`stringOp`, data `{ op, ... }`)
 

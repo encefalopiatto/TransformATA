@@ -448,9 +448,14 @@ export function specForNode(
   return byKey.get(type);
 }
 
-function clampCount(value: unknown, fallback: number): number {
+/** Upper bound on dynamic input slots (object keys, array/concat) — the editor
+ * and the compiler must agree on this so a used slot is never also reported as
+ * an "unknown input". */
+export const MAX_DYNAMIC_SLOTS = 32;
+
+export function clampCount(value: unknown, fallback: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback;
-  return Math.max(0, Math.min(32, n));
+  return Math.max(0, Math.min(MAX_DYNAMIC_SLOTS, n));
 }
 
 /**
