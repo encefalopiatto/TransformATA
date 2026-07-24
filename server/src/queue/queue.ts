@@ -84,26 +84,25 @@ export function createJob(source: JobSource, rawPayload: string): Job {
   return job;
 }
 
-/** Atomically claim the oldest queued job and mark it processing. */
+/**
+ * Atomically claim the oldest queued job and mark it processing. A single
+ * UPDATE ... RETURNING statement, so concurrent workers can never claim the
+ * same job (SQLite statements are atomic).
+ */
 export function claimNextQueued(): { job: Job; raw: string } | undefined {
   const db = getDb();
-  const claim = db.transaction((): { job: Job; raw: string } | undefined => {
-    const row = db
-      .prepare(
-        `SELECT id, raw_payload FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1`,
-      )
-      .get() as Pick<JobRow, 'id' | 'raw_payload'> | undefined;
-    if (!row) return undefined;
-    db.prepare(
-      `UPDATE jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ?`,
-    ).run(iso(), row.id);
-    const job = getJob(row.id);
-    if (!job) return undefined;
-    return { job, raw: row.raw_payload ?? '' };
-  });
-  const claimed = claim();
-  if (claimed) emitJob(claimed.job);
-  return claimed;
+  const row = db
+    .prepare(
+      `UPDATE jobs SET status = 'processing', attempts = attempts + 1, updated_at = ?
+       WHERE id = (SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1)
+       RETURNING id, raw_payload`,
+    )
+    .get(iso()) as unknown as Pick<JobRow, 'id' | 'raw_payload'> | undefined;
+  if (!row) return undefined;
+  const job = getJob(row.id);
+  if (!job) return undefined;
+  emitJob(job);
+  return { job, raw: row.raw_payload ?? '' };
 }
 
 export interface JobPatch {
@@ -119,7 +118,7 @@ export interface JobPatch {
 export function updateJob(id: string, patch: JobPatch): Job | undefined {
   const db = getDb();
   const sets: string[] = ['updated_at = ?'];
-  const params: unknown[] = [iso()];
+  const params: (string | number | null)[] = [iso()];
   if (patch.status !== undefined) {
     sets.push('status = ?');
     params.push(patch.status);
@@ -176,7 +175,7 @@ export interface ListJobsFilter {
 export function listJobs(filter: ListJobsFilter): { jobs: JobSummary[]; total: number } {
   const db = getDb();
   const where: string[] = [];
-  const params: unknown[] = [];
+  const params: (string | number)[] = [];
   if (filter.status) {
     where.push('status = ?');
     params.push(filter.status);
@@ -193,7 +192,7 @@ export function listJobs(filter: ListJobsFilter): { jobs: JobSummary[]; total: n
     .prepare(
       `SELECT * FROM jobs ${whereSql} ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`,
     )
-    .all(...params, filter.limit, filter.offset) as JobRow[];
+    .all(...params, filter.limit, filter.offset) as unknown as JobRow[];
   return { jobs: rows.map((r) => toSummary(rowToJob(r))), total: totalRow.c };
 }
 

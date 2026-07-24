@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { fromRoot } from '../root.js';
 
 const SCHEMA = `
@@ -39,14 +39,15 @@ export interface JobRow {
   output_json: string | null;
 }
 
-let db: Database.Database | undefined;
+let db: DatabaseSync | undefined;
 
-export function getDb(): Database.Database {
+export function getDb(): DatabaseSync {
   if (db) return db;
   const file = fromRoot('data', 'transformata.db');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  db = new Database(file);
-  db.pragma('journal_mode = WAL');
+  // node:sqlite (built into Node >= 22.13) — no native module to compile.
+  db = new DatabaseSync(file);
+  db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
   return db;
 }

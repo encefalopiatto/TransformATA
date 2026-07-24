@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@transformata/shared": "*",
-    "better-sqlite3": "^11.8.0",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",
     "csv-stringify": "^6.5.2",
@@ -22,7 +21,6 @@
     "ssh2-sftp-client": "^11.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",

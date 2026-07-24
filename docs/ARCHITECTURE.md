@@ -106,7 +106,8 @@ The embedded SFTP server is enabled via `SFTP_SERVER_ENABLED=true` (or
 
 ## Queue
 
-SQLite (`better-sqlite3`), no external broker: jobs table holds metadata,
+SQLite (Node's built-in `node:sqlite`, no native module to compile — this is
+why the project requires Node >= 22.13), no external broker: jobs table holds metadata,
 stage records, raw payload, and output info. An in-process worker pool
 (`workerConcurrency`) claims queued jobs and runs the pipeline. Every job
 state change is broadcast on an in-process event bus, streamed to the
